@@ -4,6 +4,8 @@ import org.apereo.cas.DefaultMessageDescriptor;
 
 import java.io.Serializable;
 
+import lombok.NoArgsConstructor;
+
 /**
  * Message conveying account password expiration warning details.
  *
