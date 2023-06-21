@@ -223,8 +223,8 @@ exports.type = async (page, selector, value, obfuscate = false) => {
     await page.type(selector, value);
 };
 
-exports.newPage = async (browser) => {
-    let page = (await browser.pages())[0];
+exports.newPage = async (browser, tabIndex = 0) => {
+    let page = (await browser.pages())[tabIndex];
     if (page === undefined) {
         console.log("Opening a new page...");
         page = await browser.newPage();
