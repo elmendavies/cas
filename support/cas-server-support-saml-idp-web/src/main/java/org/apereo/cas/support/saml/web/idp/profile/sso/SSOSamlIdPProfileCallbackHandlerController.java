@@ -88,6 +88,8 @@ public class SSOSamlIdPProfileCallbackHandlerController extends AbstractSamlIdPP
     }
 
     private ModelAndView handleProfileRequest(final HttpServletResponse response, final HttpServletRequest request) throws Exception {
+
+        autoConfigureTransientSession(request, response);
         val authnContext = retrieveAuthenticationRequest(response, request);
 
         val ticket = request.getParameter(CasProtocolConstants.PARAMETER_TICKET);
@@ -104,6 +106,7 @@ public class SSOSamlIdPProfileCallbackHandlerController extends AbstractSamlIdPP
             return WebUtils.produceErrorView(new IllegalArgumentException("Unable to determine profile binding"));
         }
         buildSamlResponse(response, request, authenticationContext, assertion, binding);
+        terminateTransientSession(response, request);
         return null;
     }
 

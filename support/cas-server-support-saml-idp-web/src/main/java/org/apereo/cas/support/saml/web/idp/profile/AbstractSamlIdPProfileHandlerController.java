@@ -6,20 +6,19 @@ import org.apereo.cas.authentication.Authentication;
 import org.apereo.cas.authentication.PrincipalException;
 import org.apereo.cas.authentication.principal.Service;
 import org.apereo.cas.configuration.model.support.saml.idp.SamlIdPCoreProperties;
+import org.apereo.cas.pac4j.DistributedJEESessionStore;
 import org.apereo.cas.services.RegisteredService;
 import org.apereo.cas.services.RegisteredServiceAttributeReleasePolicyContext;
 import org.apereo.cas.services.UnauthorizedServiceException;
 import org.apereo.cas.support.saml.SamlException;
+import org.apereo.cas.support.saml.SamlIdPConstants;
 import org.apereo.cas.support.saml.SamlIdPUtils;
 import org.apereo.cas.support.saml.SamlProtocolConstants;
 import org.apereo.cas.support.saml.services.SamlRegisteredService;
 import org.apereo.cas.support.saml.services.idp.metadata.SamlRegisteredServiceServiceProviderMetadataFacade;
 import org.apereo.cas.support.saml.web.idp.profile.builders.AuthenticatedAssertionContext;
 import org.apereo.cas.support.saml.web.idp.profile.builders.SamlProfileBuilderContext;
-import org.apereo.cas.ticket.ServiceTicket;
-import org.apereo.cas.ticket.ServiceTicketFactory;
-import org.apereo.cas.ticket.TicketGrantingTicket;
-import org.apereo.cas.ticket.TicketValidator;
+import org.apereo.cas.ticket.*;
 import org.apereo.cas.util.CollectionUtils;
 import org.apereo.cas.util.DateTimeUtils;
 import org.apereo.cas.util.DigestUtils;
@@ -60,9 +59,7 @@ import org.springframework.web.servlet.view.RedirectView;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
 /**
  * A parent controller to handle SAML requests.
@@ -266,7 +263,8 @@ public abstract class AbstractSamlIdPProfileHandlerController {
     }
 
     private static String constructRedirectUrl(final String casServerLoginUrl,
-                                               final String serviceUrl, final boolean renew,
+                                               final String serviceUrl,
+                                               final boolean renew,
                                                final boolean gateway) {
         return casServerLoginUrl + '?' + CasProtocolConstants.PARAMETER_SERVICE + '='
                + EncodingUtils.urlEncode(serviceUrl)
@@ -290,9 +288,31 @@ public abstract class AbstractSamlIdPProfileHandlerController {
         val authnRequest = (AuthnRequest) pair.getLeft();
         val builder = new URLBuilder(configurationContext.getCallbackService().getId());
 
-        builder.getQueryParams().add(
-            new net.shibboleth.utilities.java.support.collection.Pair<>(SamlProtocolConstants.PARAMETER_ENTITY_ID,
-                SamlIdPUtils.getIssuerFromSamlObject(authnRequest)));
+        val queryParams = builder.getQueryParams();
+
+        queryParams.add(
+            new net.shibboleth.utilities.java.support.collection.Pair<>(
+                    SamlProtocolConstants.PARAMETER_ENTITY_ID,
+                    SamlIdPUtils.getIssuerFromSamlObject(authnRequest)));
+
+        if (canPassTstAsParameter()) {
+
+            JEEContext context = new JEEContext(request, response);
+
+            val newSessionId = configurationContext
+                    .getSessionStore()
+                    .getSessionId(context, false);
+
+            if (newSessionId.isPresent()) {
+                LOGGER.info("Including TST as parameter");
+                queryParams.add(
+                        new net.shibboleth.utilities.java.support.collection.Pair<>(
+                                SamlIdPConstants.PARAMETER_TRANSIENT_SESSION_TICKET,
+                                newSessionId.get())
+                );
+            }
+        }
+
         storeAuthenticationRequest(request, response, pair);
         val url = builder.buildURL();
         LOGGER.trace("Built service callback url [{}]", url);
@@ -315,10 +335,48 @@ public abstract class AbstractSamlIdPProfileHandlerController {
         verifySamlAuthenticationRequest(pair, request);
         val sso = singleSignOnSessionExists(pair, request, response);
         if (sso.isEmpty()) {
+            autoConfigureTransientSession(request, response);
             return issueAuthenticationRequestRedirect(pair, request, response);
         }
         buildResponseBasedSingleSignOnSession(pair, sso.get(), request, response);
         return null;
+    }
+
+    protected void autoConfigureTransientSession(
+            HttpServletRequest request,
+            HttpServletResponse response) {
+
+        if (!canPassTstAsParameter()) {
+            return;
+        }
+
+        val webContext = new JEEContext(request, response);
+        val sessionId = Optional
+                .ofNullable(request.getParameter(SamlIdPConstants.PARAMETER_TRANSIENT_SESSION_TICKET))
+                .orElseGet(()->UUID.randomUUID().toString());
+        DistributedJEESessionStore.switchTransientSession(webContext, sessionId);
+    }
+
+    protected void terminateTransientSession(HttpServletResponse response, HttpServletRequest request) {
+        val sessionId = request.getParameter(SamlIdPConstants.PARAMETER_TRANSIENT_SESSION_TICKET);
+        val webContext = new JEEContext(request, response);
+        if (sessionId != null) {
+            configurationContext.getSessionStore().destroySession(webContext);
+            LOGGER.debug("Transient session destroyed");
+        } else {
+            configurationContext.getSessionStore().set(webContext, SamlProtocolConstants.PARAMETER_SAML_REQUEST, null);
+            LOGGER.debug("Session artifact cleaned");
+        }
+    }
+
+    /***
+     * Check if concurrent service of SAML requests is enabled.
+     * @return is multiple SAML request functionality is enabled.
+     */
+    protected boolean canPassTstAsParameter() {
+        val properties = configurationContext.getCasProperties();
+        val type = properties.getAuthn().getSamlIdp().getCore().getSessionStorageType();
+        return type == SamlIdPCoreProperties.SessionStorageTypes.TICKET_REGISTRY;
     }
 
     /**

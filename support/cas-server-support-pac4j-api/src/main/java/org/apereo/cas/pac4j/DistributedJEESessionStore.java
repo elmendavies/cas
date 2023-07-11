@@ -43,6 +43,10 @@ public class DistributedJEESessionStore implements SessionStore {
 
     private final CasCookieBuilder cookieGenerator;
 
+    public static void switchTransientSession(final WebContext webContext, String sessionId) {
+        webContext.setRequestAttribute(DistributedJEESessionStore.SESSION_ID_IN_REQUEST_ATTRIBUTE, sessionId);
+    }
+
     @Override
     public Optional<String> getSessionId(final WebContext webContext, final boolean create) {
         LOGGER.trace("Fetching session id...");

@@ -108,5 +108,10 @@ public interface SamlIdPConstants {
      * The PAOS content type.
      */
     String ECP_SOAP_PAOS_CONTENT_TYPE = "application/vnd.paos+xml";
+
+    /**
+     * Constant representing the TST
+     */
+    String PARAMETER_TRANSIENT_SESSION_TICKET = "tst";
 }
 
